@@ -1,0 +1,6 @@
+[submodule "gramarye"]
+	path = gramarye
+	url = https://github.com/noahspoling/DungeonDelve.git
+[submodule "gramarye-libcore"]
+	path = gramarye-libcore
+	url = https://github.com/noahspoling/xmos-libcore.git
