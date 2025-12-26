@@ -65,8 +65,8 @@ if [ ! -d "$REPO_NAME" ]; then
     exit 1
 fi
 
-# Check if it's a git repository
-if [ ! -d "$REPO_NAME/.git" ]; then
+# Check if it's a git repository (submodules use .git file, not directory)
+if ! git -C "$REPO_NAME" rev-parse --git-dir >/dev/null 2>&1; then
     print_error "'$REPO_NAME' is not a git repository"
     exit 1
 fi

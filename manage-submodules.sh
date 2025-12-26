@@ -8,27 +8,38 @@ VERSIONS_FILE="submodule-versions.json"
 update_versions_json() {
     echo "Updating submodule-versions.json with current submodule commits..."
     
-    # Get current commit for gramarye
-    GRAMARYE_COMMIT=$(git -C gramarye rev-parse HEAD 2>/dev/null || echo "")
-    # Get current commit for gramarye-libcore
-    LIBCORE_COMMIT=$(git -C gramarye-libcore rev-parse HEAD 2>/dev/null || echo "")
-    
-    # Update JSON using jq if available, otherwise use sed
-    if command -v jq &> /dev/null; then
-        jq --arg gramarye_commit "$GRAMARYE_COMMIT" \
-           --arg libcore_commit "$LIBCORE_COMMIT" \
-           --arg date "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-           '.submodules.gramarye.commit = $gramarye_commit |
-            .submodules."gramarye-libcore".commit = $libcore_commit |
-            .last_updated = $date' \
-           "$VERSIONS_FILE" > "${VERSIONS_FILE}.tmp" && mv "${VERSIONS_FILE}.tmp" "$VERSIONS_FILE"
-        echo "Updated submodule-versions.json"
-    else
-        echo "Warning: jq not found. Please install jq for automatic JSON updates, or update manually."
-        echo "Current commits:"
-        echo "  gramarye: $GRAMARYE_COMMIT"
-        echo "  gramarye-libcore: $LIBCORE_COMMIT"
+    if [ ! -f "$VERSIONS_FILE" ]; then
+        echo "Error: $VERSIONS_FILE not found!"
+        exit 1
     fi
+    
+    if ! command -v jq &> /dev/null; then
+        echo "Error: jq is required to update JSON. Please install jq."
+        exit 1
+    fi
+    
+    # Start with updating the last_updated timestamp
+    TEMP_FILE="${VERSIONS_FILE}.tmp"
+    jq --arg date "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" '.last_updated = $date' "$VERSIONS_FILE" > "$TEMP_FILE"
+    
+    # Process each submodule - use process substitution to avoid subshell issues
+    while IFS='|' read -r name path; do
+        # Check if submodule is initialized (git rev-parse will work if it is)
+        CURRENT_COMMIT=$(git -C "$path" rev-parse HEAD 2>/dev/null || echo "")
+        if [ -n "$CURRENT_COMMIT" ]; then
+            # Update JSON with this submodule's commit
+            jq --arg name "$name" --arg commit "$CURRENT_COMMIT" \
+                '.submodules[$name].commit = $commit' "$TEMP_FILE" > "${TEMP_FILE}.new" && \
+                mv "${TEMP_FILE}.new" "$TEMP_FILE"
+            echo "  Found commit for $name: $CURRENT_COMMIT"
+        else
+            echo "  Warning: $name (path: $path) is not initialized, skipping"
+        fi
+    done < <(jq -r '.submodules | to_entries[] | "\(.key)|\(.value.path)"' "$VERSIONS_FILE")
+    
+    # Write the updated JSON back to file
+    mv "$TEMP_FILE" "$VERSIONS_FILE"
+    echo "Updated submodule-versions.json"
 }
 
 # Function to checkout a specific submodule version (tag, branch, or commit)
@@ -110,8 +121,8 @@ show_status() {
         echo ""
         echo "Current checked out versions:"
         jq -r '.submodules | to_entries[] | .value.path' "$VERSIONS_FILE" | while read -r path; do
-            if [ -d "$path/.git" ]; then
-                CURRENT_COMMIT=$(git -C "$path" rev-parse HEAD 2>/dev/null)
+            CURRENT_COMMIT=$(git -C "$path" rev-parse HEAD 2>/dev/null || echo "")
+            if [ -n "$CURRENT_COMMIT" ]; then
                 CURRENT_TAG=$(git -C "$path" describe --tags --exact-match 2>/dev/null || echo "none")
                 CURRENT_BRANCH=$(git -C "$path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "detached")
                 echo "$path:"

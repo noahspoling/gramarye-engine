@@ -23,6 +23,12 @@ if [ ! -d "$SUBMODULE" ]; then
     exit 1
 fi
 
+# Initialize submodule if not already initialized
+if ! git -C "$SUBMODULE" rev-parse HEAD >/dev/null 2>&1; then
+    echo "Initializing submodule $SUBMODULE..."
+    git submodule update --init "$SUBMODULE"
+fi
+
 cd "$SUBMODULE"
 
 # Fetch latest tags
@@ -77,12 +83,57 @@ fi
 echo "Updating to: $TARGET"
 git checkout "$TARGET" --quiet
 
+# Get the commit hash for the target
+TARGET_COMMIT=$(git rev-parse HEAD)
+
 cd ..
+
+# Update submodule-versions.json if it exists
+VERSIONS_FILE="submodule-versions.json"
+if [ -f "$VERSIONS_FILE" ]; then
+    if command -v jq &> /dev/null; then
+        echo ""
+        echo "Updating submodule-versions.json..."
+        
+        # Find the submodule name by matching the path
+        SUBMODULE_NAME=$(jq -r --arg path "$SUBMODULE" '.submodules | to_entries[] | select(.value.path == $path) | .key' "$VERSIONS_FILE")
+        
+        if [ -n "$SUBMODULE_NAME" ] && [ "$SUBMODULE_NAME" != "null" ]; then
+            # Extract tag without 'v' prefix if present (for consistency with JSON format)
+            TAG_VALUE=$(echo "$TARGET" | sed 's/^v//')
+            
+            # Update JSON: set tag, commit, clear branch, update timestamp
+            jq --arg name "$SUBMODULE_NAME" \
+               --arg tag "$TAG_VALUE" \
+               --arg commit "$TARGET_COMMIT" \
+               --arg date "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+               '.submodules[$name].tag = $tag |
+                .submodules[$name].commit = $commit |
+                .submodules[$name].branch = null |
+                .last_updated = $date' \
+               "$VERSIONS_FILE" > "${VERSIONS_FILE}.tmp" && mv "${VERSIONS_FILE}.tmp" "$VERSIONS_FILE"
+            
+            echo "  Updated $SUBMODULE_NAME in submodule-versions.json"
+            echo "    Tag: $TAG_VALUE"
+            echo "    Commit: $TARGET_COMMIT"
+        else
+            echo "  Warning: Submodule '$SUBMODULE' not found in submodule-versions.json"
+            echo "  Skipping JSON update"
+        fi
+    else
+        echo ""
+        echo "Warning: jq not found. Cannot update submodule-versions.json"
+        echo "  Install jq or update manually"
+    fi
+fi
 
 # Show what changed
 echo ""
 echo "Submodule updated. To commit:"
 echo "  git add $SUBMODULE"
+if [ -f "$VERSIONS_FILE" ]; then
+    echo "  git add $VERSIONS_FILE"
+fi
 echo "  git commit -m \"Update $SUBMODULE to $TARGET\""
 
 
